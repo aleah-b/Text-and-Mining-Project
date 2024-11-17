@@ -1,0 +1,103 @@
+---
+title: "lasso"
+author: "Aleah Bobb"
+date: "8/25/2023"
+output: word_document
+---
+
+```{r}
+#downloading some libraries
+library(tidyverse)
+library(tidytext)
+library(lubridate)
+library(textrecipes)
+library(tidymodels)
+library(dplyr)
+library(stringr)
+library(SnowballC)
+library(stopwords)
+library(widyr)
+library(furrr)
+#library(irlba)
+
+#ABC Data
+abc_data <- read.csv("/Users/aleahbobb/Documents/Data Science Capstone/project_data.csv", stringsAsFactors = FALSE)
+
+#Pre-processing the text data
+abc_data[abc_data$sentiment==1, "sentiment"] <- "positive"
+abc_data[abc_data$sentiment==0, "sentiment"] <- "negative"
+abc_data$sentiment <- factor(abc_data$sentiment)
+
+abc_data$id <- 1:nrow(abc_data)
+
+abc_data <- abc_data[!abc_data$review==" ", ]
+abc_data <- abc_data[!abc_data$review=="  ", ]
+abc_data <- abc_data[!grepl("^https://", abc_data$review), ]
+abc_data <- abc_data[!grepl("^  https://", abc_data$review), ]
+abc_data <- abc_data[!duplicated(abc_data), ]
+abc_data$processed_text <- str_replace_all(abc_data$review,
+                                            "[^[:alnum:]]", " ")
+abc_data$processed_text <- str_replace_all(abc_data$processed_text,
+                                            "[[:digit:]]", " ")
+abc_data$processed_text <- str_to_lower(abc_data$processed_text)
+```
+
+```{r}
+#splitting the data
+abc_split <- abc_data %>%
+  select(processed_text, sentiment) %>%
+  initial_split()
+abc_train <- training(abc_split)
+abc_test <- testing(abc_split)
+
+#preprocessing
+
+abc_rec <- recipe(sentiment ~ processed_text, data = abc_train) %>%
+  step_tokenize(processed_text) %>%
+  step_tokenfilter(processed_text, max_tokens = 1e4) %>%
+  step_stopwords(processed_text) %>%
+  step_stem(processed_text) %>%
+  step_tfidf(processed_text) %>%
+  step_normalize(all_predictors())
+
+
+```
+lasso
+```{r}
+
+library(discrim)
+lasso_spec <- logistic_reg(penalty = 0.01, mixture = 1) %>%
+  set_mode("classification") %>%
+  set_engine("glmnet")
+
+lasso_wf <- workflow() %>%
+  add_recipe(abc_rec) %>%
+  add_model(lasso_spec)
+
+# Define cross-validation folds
+abc_folds <- vfold_cv(abc_train)
+
+# Fit Lasso Regression model
+set.seed(2020)
+lasso_rs <- fit_resamples(
+  lasso_wf,
+  abc_folds,
+  control = control_resamples(save_pred = TRUE)
+)
+```
+please hurry up and work. please
+
+```{r}
+# Collect and display metrics
+lasso_rs_metrics <- collect_metrics(lasso_rs)
+lasso_rs_metrics
+```
+
+```{r}
+# Plot ROC curve
+lasso_rs_predictions <- collect_predictions(lasso_rs)
+lasso_rs_roc <- lasso_rs_predictions %>%
+  group_by(id) %>%
+  roc_curve(truth = sentiment, .pred_positive, event_level = 'second')
+autoplot(lasso_rs_roc)
+```
